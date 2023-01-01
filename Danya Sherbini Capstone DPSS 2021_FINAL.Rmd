@@ -1,0 +1,401 @@
+---
+title: "DPSS 2021 Capstone Project"
+subtitle: "The Political Legacy of the George Floyd Protests"
+author: "Danya Sherbini"
+date: "9/25/2021"
+output: pdf_document
+---
+
+# Introduction
+
+In May 2020, protests erupted across the United States in response to the death of George Floyd at the hands of a Minneapolis police officer. Press coverage from that summer attributes the protests to a combination of social and economic factors that set the stage for the widespread social movement. A primary underlying cause of the protests was the effects of the COVID-19 pandemic, which heightened pre-existing racial inequity (Stewart). The pandemic disproportionately impacted Black and Latinx communities in terms of cases, deaths, unemployment and subsequent financial instability. Stay-at-home and social distancing orders across the country also meant that more people were at home rather than at the office, which lowered the barrier to entry for protest participants and likely increased the scale of the demonstrations.
+
+The protests were also a response to ongoing police brutality against Black Americans, who are twice as likely as white Americans to be pulled over by police, and are more likely to be searched (McLaughlin). Violence against Black Americans had garnered increased national media attention in the months leading up to Floyd’s killing, centered on the killings of Ahmaud Arbery and Breonna Taylor, which had occurred earlier in the year. The ‘viral’ nature of Floyd’s death (as well as Arbery’s) also facilitated the large-scale response. Video footage of the police officer kneeling on Floyd’s neck was widely distributed and viewed, spurring a sense of national outrage and collective trauma. This trauma is described as not only one affecting Black Americans, but also as a ‘vicarious trauma’ affecting white and other non-Black Americans. This may help explain the significant amount of non-Black, and especially white, involvement in the protests, signaling a shift in white support against issues like police brutality and systemic racism.
+
+The George Floyd protests may have also had an effect on Democratic voter registration. According to a New York Times article, Democratic voter registration increased 50% in the first half of June 2020 compared to the previous month, whereas Republican voter turnout increased only 6% over the same period. In Minnesota specifically, Democratic voter turnout doubled compared to 2016 levels, while Republican turnout in the state remained consistent across the two election years. However, this surge in voter registration was temporary and did not change voter registration at large in 2020, calling into question the relationship between the protests and voter mobilization. It’s also possible that the early June surge in registration was due to the reopening of election offices and DMVs, making it easier in general to register to vote (Corasaniti). Though inconclusive, this discussion reflects a wider theme throughout the media that the protests may have had an effect on voting patterns in the 2020 election, which is the subject of the exploration below.
+
+# Distribution of Protests
+
+Below are maps showing the distribution of George Floyd protests in the U.S. in May and June 2020, including protest size, protests that escalated to violence, and protests that involved police altercation.
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+# Load packages
+library(tidyverse)
+library(dplyr)
+library(sf) # for working with spatial data
+library(readxl) # to read xlsx files
+library(tmap) # plotting maps
+library(broom) # for formatting/plotting regressions
+library(stargazer) # for nice regression tables
+```
+
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+# Set working directory
+setwd("/Users/danya/Documents/Personal/2. School/DPSS 2021/Capstone Research Project")
+
+# Loading in the protest and voting data
+protests <- read_csv("george-floyd-exports-june-22.csv")
+vote <- read_excel("vote2020.xlsx")
+
+# Unzipping and reading county shape file
+unzip("tl_2016_us_county.zip")
+counties <- st_read("tl_2016_us_county.shp")
+
+## DATA CLEANING ##
+
+# Converting protest long/lat to sf
+protests <- st_as_sf(
+  protests,
+  coords = c("longitude","latitude"),
+  crs = 4326)
+
+# Adding variable for whether or not a protest escalated to violence
+protests <- protests %>%
+  mutate(escalated=ifelse(escalation=="Yes",1,0)) 
+
+# Ensuring counties has same crs code for the join
+counties <- st_transform(counties, 4326)
+
+# Joining protest and county data
+protests_merged <- st_join(
+  protests,
+  counties, left = TRUE,
+  join = st_within
+)
+
+# Remove the geometry column from merged data
+protests_merged$geometry <- NULL
+
+# Aggregating count of protests by county, and count of protests that escalated to violence
+protests_agg <- protests_merged %>%
+  group_by(fips) %>%
+  summarize( 
+    protest_count = n(),
+    num_escalated = sum(escalated))
+
+# Rejoining aggregate data with shapefile
+county_data <- left_join(counties, protests_agg, by = "fips")
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE, out.width = "50%"}
+## MAPPING ##
+
+# Distribution of protests
+p1 <- protests %>%
+  ggplot() +
+  geom_sf(aes(),alpha=.3)+
+  theme_void() +
+  labs(
+    title = "Distribution of George Floyd Protests in the US",
+    subtitle = "May - June 2020"
+  )
+p1
+
+# Protests by size
+p2 <- protests %>%
+  filter(size!="Not recorded") %>%
+  ggplot() +
+  geom_sf(aes(color = size), alpha=.7)+
+  theme_void() +
+  labs(
+    title = "George Floyd Protests by Size",
+    subtitle = "US, 2020", color = "Protest Size"
+  )
+p2
+
+# Protests by violence escalation
+p3 <- protests %>%
+  ggplot() +
+  geom_sf(aes(color = escalation),alpha=.7)+
+  scale_fill_brewer(palette = "Set1", name = "Escalated to Violence", direction = -1) +
+  scale_color_brewer(palette = "Set1", name = "Escalated to Violence", direction = -1) +
+  theme_void() +
+  labs(
+    title = "George Floyd Protests by Violence Escalation",
+    subtitle = "US, 2020"
+  )
+p3
+
+# Protests by police altercation
+p4 <- protests %>%
+  filter(police_altercation!="Not recorded") %>%
+  ggplot() +
+  geom_sf(aes(color = police_altercation))+
+  scale_fill_brewer(palette = "Set1", name = "Police Altercation", direction = -1) +
+  scale_color_brewer(palette = "Set1", name = "Police Altercation", direction = -1) +
+  theme_void() +
+  labs(
+    title = "George Floyd Protests by Police Altercation",
+    subtitle = "US, 2020"
+  )
+p4
+```
+
+
+# Regression Analysis
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+# Preparing for the regressions/data manipulation
+
+# Joining county protest data with voting data
+vote <- vote %>% 
+  dplyr::rename(fips=county_fips)
+
+county_data_full <- left_join(county_data, vote, by = "fips")
+
+# Removing NAs from protest count and escalated count
+county_data_full <- county_data_full %>%
+  mutate(protest_count = ifelse(is.na(protest_count),0,protest_count),
+         num_escalated = ifelse(is.na(num_escalated),0,num_escalated))
+
+# Creating variable for if a protest occurred and if escalation occurred
+county_data_full <- county_data_full %>%
+  mutate(protest_occurred = ifelse(protest_count > 0,1,0),
+         escalation_occurred = ifelse(protest_occurred==1 & num_escalated > 0,1,0))
+
+# Reducing some columns from the table
+county_data_reduced <- county_data_full %>%
+  select(fips,state_name,STATEFP,county_name,protest_occurred,escalation_occurred,protest_count,num_escalated,votes_gop,votes_dem,total_votes, diff, per_gop,per_dem,per_point_diff)
+
+```
+
+### Regression 1
+
+Regression 1 shows the relationship between trump vote share and (1) whether a protest occurred and (2) whether the protest, if it occurred, escalated to violence. We see a protest_occurred coefficient of -.149, indicating that for every protest that occurred, Trump vote share decreased by 15%. This estimate is statistically significant with a p-value of 2e-16. We see a reduced effect on Trump vote share when it comes to the occurrence of protests that escalated to violence (i.e. violent protests). For every violent protest that occurred, Trump vote share decreased by 12% (p-value = 2e-16). This implies that the protests did have an effect on reducing Trump vote share in the 2020 election, but that violent protests had a less significant effect.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE, results='asis'}
+
+# Regression 1 #  
+
+lm1 <- lm(per_gop ~ protest_occurred + escalation_occurred, data = county_data_reduced)
+stargazer(lm1, header = FALSE)
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width = "50%"}
+
+# Plotting the regression
+p_lm1 <- ggplot(county_data_reduced, aes(x = protest_occurred, y = per_gop)) + 
+  geom_point(aes(alpha=.7)) + 
+  theme(legend.position="none")+
+  geom_abline(slope = coef(lm1)[[2]], intercept = coef(lm1)[[1]], color="Blue")+
+  labs(x = "Protest Occurred", y = "Trump Vote Share", title="Protest Occurence and Trump Vote Share")
+p_lm1
+
+# Plotting the regression with escalation_occurred
+p_lm1.2 <- ggplot(county_data_reduced, aes(x = escalation_occurred, y = per_gop)) + 
+  geom_point(aes(alpha=.7)) + 
+  theme(legend.position="none")+
+  geom_abline(slope = coef(lm1)[[2]], intercept = coef(lm1)[[1]], color="Blue")+
+  labs(x = "Violent Protest Occurred", y = "Trump Vote Share", title="Violent Protest Occurence and Trump Vote Share")
+p_lm1.2
+```
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+
+# Plotting the estimates - Did not include this in my final submission due to page allotment.
+p_lm1.3 <- lm1 %>%
+  tidy(., conf.int = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  ggplot(aes(estimate, term, color = term)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  geom_vline(xintercept=0) +
+  theme_minimal() +
+  theme(legend.position="none")+
+  labs(title="Effect of Violent and Non-Violent Protests on Trump Vote Share")
+p_lm1.3
+```
+
+
+### Regression 2
+
+In regression 2, we repeat the same approach but instead look at the relationship between Trump vote share and number of protests - and violent protests - per county.
+
+Similar to the first regression, we see a negative relationship between the number of protests per county and Trump vote share, implying that protests did mobilize voters against Donald Trump. For every additional protest that occurred, Trump vote share decreased by 2.5%. This result is highly statistically significant, with a p-value of 2e-16. 
+
+We witness a similar pattern when it comes to the count of violent protests. For every additional violent protest, Trump vote share decreases by a lesser degree, decreasing by 1.5%. As we saw in regression 1, protests do seem to mobilize voters against Trump, however violent protests do not reduce Trump vote share as much. Importantly, the statistical significance here decreases as well, with a p-value of .0165.
+
+These regressions are very likely biased. There are a number of factors that influence an individual's vote that are not incorporated here and could lead to omitted variable bias. Demographic information like race, gender, income-level, state, and region likely all play a factor into whether or not an individual voted for Trump. These regressions do not control for these factors, and do not take into consideration state-to-state differences. For example, states that strongly lean Republican or Democrat likely will not see as much of an effect of the protests on Trump vote share, while states that have more political variation will likely see a greater effect.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE, results='asis'}
+# Regression 2
+lm2 <- lm(per_gop ~ protest_count + num_escalated, data = county_data_reduced)
+
+# Regression table
+stargazer(lm2, header = FALSE)
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width = "50%"}
+
+# Plotting the regression
+p_lm2 <- ggplot(county_data_reduced, aes(x = protest_count, y = per_gop)) + 
+  geom_point(aes(alpha=.7)) + 
+  theme(legend.position="none")+
+  geom_abline(slope = coef(lm2)[[2]], intercept = coef(lm2)[[1]], color="Blue")+
+  labs(x = "Protest Count", y = "Trump Vote Share", title="Protest Frequency and Trump Vote Share")
+p_lm2
+
+# Plotting the regression with num_escalated
+p_lm2.2 <- ggplot(county_data_reduced, aes(x = num_escalated, y = per_gop)) + 
+  geom_point(aes(alpha=.7)) + 
+  theme(legend.position="none")+
+  geom_abline(slope = coef(lm2)[[3]], intercept = coef(lm2)[[1]], color="Blue")+
+  labs(x = "Count of Violent Protests", y = "Trump Vote Share", title="Violent Protests and Trump Vote Share")
+p_lm2.2
+```
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+# Plotting the estimates - Did not include this in my final submission due to page allotment.
+p_lm2.3 <- lm2 %>%
+  tidy(., conf.int = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  ggplot(aes(estimate, term, color = term)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high)) +
+  geom_vline(xintercept=0) +
+  theme_minimal() +
+  theme(legend.position="none")+
+  labs(title="Effect of Violent and Non-Violent Protests on Trump Vote Share (Count)")
+p_lm2.3
+```
+
+
+### Regression 3
+
+We can control for state-to-state variation by incorporating state-level fixed effects, which is done in the third regression below. When we incorporate fixed effects, we see that the effect of protest count on Trump vote share decreases but is still significant (same p-value of 2e-16). Meanwhile, the effect of violent protest count on Trump vote share goes down and is far less statistically significant (p-value = .036931).
+
+We have still not gotten rid of all potential biases in this regression. As stated above, there are a number of factors that influence a voter's decision in a presidential election, from demographics to income to employment status. Additionally, the George Floyd protests took place months before the November 2020 election, leaving ample opportunity for other events to influence voters' decisions. Not all voters are decided months, or even weeks, before an election. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+
+# Regression 3- Fixed effects model
+lm3_fe <- lm(
+  per_gop ~ protest_count + num_escalated + factor(STATEFP), #state level FE
+  data = county_data_reduced)
+
+# Regression table
+stargazer(lm3_fe, header = FALSE, omit = "STATEFP")
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width = "50%"}
+# Plotting the regression
+p_lm3 <- ggplot(county_data_reduced, aes(x = protest_count, y = per_gop)) + 
+  geom_point(aes(alpha=.7)) + 
+  theme(legend.position="none")+
+  geom_abline(slope = coef(lm3_fe)[[2]], intercept = coef(lm3_fe)[[1]], color="Blue")+
+  labs(x = "Protest Count", y = "Trump Vote Share", title="Protest Count and Trump Vote Share", subtitle="With Fixed Effects")
+p_lm3
+
+# Plotting the regression with num_escalated
+p_lm3.2 <- ggplot(county_data_reduced, aes(x = num_escalated, y = per_gop)) + 
+  geom_point(aes(alpha=.7)) + 
+  theme(legend.position="none")+
+  geom_abline(slope = coef(lm3_fe)[[3]], intercept = coef(lm3_fe)[[1]], color="Blue")+
+  labs(x = "Count of Violent Protests", y = "Trump Vote Share", title="Violent Protests and Trump Vote Share", subtitle="With Fixed Effects")
+p_lm3.2
+```
+
+Although these regressions are still likely biased, we can demonstrate a statistically significant negative relationship between the protests and Trump vote share. While part of a greater landscape of events influencing the 2020 election (including the ongoing effects of the COVID-19 pandemic), the political legacy of the George Floyd protests and the Black Lives Matter movement should not be ignored.
+
+\pagebreak
+
+# Sources
+
+Stewart, Emily. “George Floyd’s killing has opened the wounds of centuries of American racism.” Vox, 10 June 2020,
+  https://www.vox.com/identities/2020/5/30/21275694/george-floyd-protests-minneapolis-atlanta-new-york-brooklyn-cnn. Accessed 13 September   2021. 
+
+McLaughlin, Elliot. “How George Floyd's death ignited a racial reckoning that shows no signs of slowing down.” CNN, 9 August 2020,          https://www.cnn.com/2020/08/09/us/george-floyd-protests-different-why/index.html. Accessed 13 September 2021. 
+
+Corasaniti, Nick, and Isabella Paz Grullon. “Did the George Floyd Protests Boost Democratic Voter Registration?” New York Times, 11 August   2020,https://www.nytimes.com/2020/08/11/us/politics/democrats-voter-registration-george-floyd.html. Accessed 13 September 2021. 
+
+\pagebreak
+
+# Additional Exploration: Difference-in-Difference
+
+In this section, I explore the effect of the George Floyd protests on mobilizing voter registration in Pennsylvania using a difference-in-difference design.
+
+The plot below shows voter registration in Pennsylvania for 28 days before and 28 days after the start of the protests, which began in the state on May 30. There is a significant decrease in new voter registrations after May 18, which was the deadline to post-mark a voter registration application in Pennsylvania. After the start of the protests, voter registrations stay stagnant and then begin to increase after June 14.
+
+To better understand the relationship between the George Floyd protests and voter registration, I ran a difference-in-difference design. Using the start of the protests as my time variable and the counties that had protests occur as my treatment group, I got the regression output below. The coefficient for our interaction variable, representing the treatment group of counties with protests in the treatment period after the protests have begun, is -20 (p-value = .00017). This indicates a negative relationship between the protests and voter registration, implying that protests had a negative effect on mobilizing voters in the state. However, this regression is likely biased due to the proximity of the protests start date and the voter registration deadline for the Primary elections in Pennsylvania. Voters had to register by May 18 (post-marked), which is why we see a natural decline in voter registrations.
+
+Further exploration on this topic could include expanding to different states that did not have a registration deadline so close to the start of the protest date. Exploring this with more states would also provide a larger sample size. The window before and after the protests could also be expanded to control for the deadline, however in that case the further out from the protests you go, the more likely omitted factors influencing a person's decision to register to vote will be present.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE, results='asis'}
+# Effect of protests on mobilizing voter registration in Pennsylvania
+
+# Reading in the PA voter registration data
+PA_vote_reg_2020 <- read.csv("PA_reg_data_2020.csv")
+
+# Let's zoom into 28-days pre-and-post May 31 (the date of the first George Floyd protest in PA)
+a <- "county"
+
+PA_28days <- PA_vote_reg_2020 %>%
+  filter(reg_date>= as.Date("2020-05-03") & reg_date <= as.Date("2020-06-28")) %>%
+  group_by(county_name, reg_date) %>% # Collapsing PA voter registration data by date and county
+  dplyr::summarize(num_reg=n()) %>%
+  mutate(county_name=tolower(paste(county_name,a,sep=" ")))
+
+PA_28days <- PA_28days %>%
+  dplyr::rename(date=reg_date)
+
+# Filtering protest data by PA and collapsing by date
+PA_protests <- protests_merged %>%
+  filter(state=="Pennsylvania") %>%
+  group_by(NAMELSAD,start_date) %>%
+  dplyr::summarize(protest_count=n())%>%
+  mutate(start_date=format(as.Date(start_date, format ="%d-%B"),"2020-%m-%d"))
+
+PA_protests <- PA_protests %>%
+  dplyr::rename(county_name=NAMELSAD)%>% # renaming column to prepare for join
+  mutate(county_name=tolower(county_name)) # making values lower case
+
+PA_protests <- PA_protests %>%
+  dplyr::rename(date=start_date) # renaming column to prepare for join
+
+# Joining PA voter reg data and protest data
+PA_28days_merged <- full_join(PA_28days, PA_protests)
+
+# List of counties that had protests occur
+treat_counties <- c("lehigh county", "allegheny county", "berks county", "blair county", "bucks county", "butler county", "centre county", "chester county","clearfield county", "columbia county", "crawford county", "cumberland county", "dauphin county", "delaware county", "erie county", "franklin county", "jefferson county", "lackawanna county", "lancaster county","lebanon county", "luzerne county", "lycoming county", "mercer county", "montour county","northampton county", "philadelphia county", "union county", "westmoreland county","york county")
+
+# Creating indicator variables for DiD
+PA_28days_merged <- PA_28days_merged %>%
+  mutate(
+    num_reg=ifelse(is.na(num_reg),0,num_reg),
+    protest_count=ifelse(is.na(protest_count),0,protest_count),
+    protest_occurred=ifelse(protest_count>0,1,0),
+    is_post=ifelse(date>=as.Date("2020-05-30"),1,0),
+    treated_group=ifelse(county_name %in% treat_counties,1,0)
+  )
+# Running the DiD
+lm_did <- lm(num_reg ~ is_post + treated_group + is_post*treated_group, data=PA_28days_merged)
+
+# Regression table
+stargazer(lm_did, header = FALSE)
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Plotting the PA voter registration data
+did_plot1 <- PA_28days_merged %>%
+  mutate(date=as.Date(date))%>%
+  group_by(date)%>%
+  dplyr::summarize(num_reg=sum(num_reg))%>%
+  ggplot(aes(x=date, y=num_reg)) +
+  geom_point() +
+  geom_line() +
+  geom_vline(xintercept = as.Date("2020-05-29"),linetype="dashed",color="red")+
+  geom_text(aes(x=as.Date("2020-05-29"), label="start of protests", y=4500), color="red", angle=90, vjust = 1.2, size=4)+
+  geom_vline(xintercept = as.Date("2020-05-18"),linetype="dashed",color="blue")+
+  geom_text(aes(x=as.Date("2020-05-18"), label="Primary Reg Deadline", y=4500), colour="blue", angle=90, vjust = -1.4, size=3.5)+
+  scale_x_date(breaks = seq.Date(from = as.Date("2020-05-03"), 
+                                 to = as.Date("2020-06-28"), by = 7)) +
+  scale_y_continuous(breaks=c(0,500,1000,1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5))+
+  labs(x="Date",y="Number of New Registered Voters", title="Voter Registration in Pennsylvania",subtitle="May - June 2020")
+did_plot1
+```
+
